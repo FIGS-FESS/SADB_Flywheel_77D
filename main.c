@@ -19,6 +19,26 @@
 //Sets the number of Sysclk cycles that the ADC samples for
 #define sample_cycles (20 - 1)  //Note* only change the first number, the 1 accounts for the minimum
 
+//Current Bias current for the SADB to help stabilize
+#define current_bias 2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
+
+//Current sensor conversion scale       *Calibrated as of 2017/07/20
+#define current_scale (10.168070782 * 3.3 / 4096)//Conversion scale for current sensor *(Amps/Volt)
+
+//Current sensor conversion offset      *Calibrated as of 2017/07/20
+#define current_offset -13.45198481 //Conversion offset for current sensor *(Amps)
+
+//Displacement sensor sample period
+#define x1_dt 0.1 //*(MilliSeconds)
+
+//Displacement sensor target
+#define x1_target 1.2   //Target float level *(Millimeters)
+
+//PID constants
+#define kp_init 1   //Default to 1.1 for Initial tuning
+#define ki_init 0   //Default to 0 for initial tuning
+#define kd_init 0   //Default to 0 for initial tuning
+
 /*
  * Structures
  */
@@ -80,12 +100,13 @@ interrupt void epwm2_isr();
  */
 
 //Definition of the X1 instance of the position sensor structure
-position X1;    //Variable used to store the PID math variables
+position X1;    //Variable used to store the PID math variables for the x axis displacement sensor
 
 //Definition of the current coil structure
 current C1;     //Variable used to store the current control variables for coil 1
+current C2;     //Variable used to store the current control variables for coil 2
 
-//Acuasition time calibration
+//Acquisition time calibration
     //*Used for Debug
 int AQSTime = 499;
 int AQUSFlag = 0;
@@ -108,57 +129,37 @@ int x1_update;  //Flag for new displacement sensor readings
 
 //Displacement sensor conversion scale
     //*Make this a define
+    //*Bring this variable into the struct
 float disp_scale = 1.079757 * 3.3 / 4096;   //Conversion scale for displacement sensor *(Millimeters/Volt)
 
 //Displacement sensor conversion offset
     //*Make this a define
+    //*Bring this variable into the struct
 float disp_offset = 0.0004411644;  //Conversion offset for displacement sensor *(Millieters)
-
-//Displacement sensor target
-float x1_target = 1.2;    //Target float level *(Millimeters)
-
-//Displacement sensor sample period
-    //*Make this a define
-float x1_dt = 0.1;   //*(MilliSeconds)
 
 //Displacement to current ratio
     //*Make this a define
+    //*First add it into the displacement struct
 float disp_to_current = 2.2;  //Scales the PID output to current *(Meters/Amp)
 
-//Current sensor reading
-int i1_sample;  //Global for i1 current sensor reading *(Digitized)
+//Current sensors readings
+int c1_sample;  //Global for coil 1 current sensor reading *(Digitized)
+int c2_sample;  //Global for coil 2 current sensor reading *(Digitized)
 
 //Current sensor reading in current
 float i1_current;   //*(Amps)
 
 //Current sensor update flag
-int i1_update;  //Flag for new current sensor readings
+int c_update;  //Flag for new current sensor readings
 
 //Current target
 float i1_target;    //*(Amps)
-
-//Current sensor conversion scale
-    //*Make this a define
-float current_scale = 10.168070782 * 3.3 / 4096;    //Conversion scale for current sensor *(Amps/Volt)
-
-//Current sensor conversion offset      *Edited to zero
-    //*Make this a define
-float current_offset = -13.45198481;   //Conversion offset for current sensor *(Amps)
-
-//Current Bias current for SASB floator
-    //*Make this a define
-float current_bias = 2.2;   //Calculated from the desired gap and the force on the floator due to gravity
 
 //Maximum Current
 float current_max = 15;  //Max current for operation *(Amps)
 
 //Minimum Current
 float current_min = -15; //Min current for operation *(Amps)
-
-//PID constants
-float   kp = .4,    //Default to 1.1 for Initial tuning
-        ki = .3,    //Default to 0 for initial tuning
-        kd = 15;    //Default to 0 for initial tuning
 
 //Current control variables
 float   i1_error,
@@ -199,7 +200,9 @@ void main(void){
 
     //Setup C1 variable
     SetupCoil(&C1);
-    C1.sample_loc = &i1_sample;
+    SetupCoil(&C2);
+    C1.sample_loc = &c1_sample;
+    C2.sample_loc = &c2_sample;
 
     //Disable interrupts? Followed the example of process from the control suite example code
     DINT;
@@ -256,8 +259,8 @@ void main(void){
     for(;;){
 
         //Current control if statement
-        if(i1_update){
-            i1_update = 0;
+        if(c_update){
+            c_update = 0;
             //Bang_Bang_Cntrl();
 
         }
@@ -303,9 +306,9 @@ void SetupPosition(position *sensor){
     int i;      //Used as a simple loop counter
     sensor->target = x1_target;         //Feeds the position structure the location of sample global
     sensor->dt = x1_dt;                 //Feeds in the specific sample period for the sensor
-    sensor->kp = kp;                    //Sets default proportional constant
-    sensor->ki = ki;                    //Sets default integral constant
-    sensor->kd = kd;                    //Sets default derivative constant
+    sensor->kp = kp_init;               //Sets default proportional constant
+    sensor->ki = ki_init;               //Sets default integral constant
+    sensor->kd = kd_init;               //Sets default derivative constant
     sensor->prev_place = 0;             //Starts the PID progression at 0
     sensor->prev_last = prev_size - 1;  //Starts the last pointer to the end of the array
     for(i=0;i<prev_size;i++){   
@@ -610,10 +613,10 @@ interrupt void adca1_isr(){
 
 
     //Write the sample to the global variable
-    i1_sample = AdcaResultRegs.ADCRESULT0;      //Reads the result register of SOC0
+    c1_sample = AdcaResultRegs.ADCRESULT0;      //Reads the result register of SOC0
 
     //Set the update flag
-    i1_update = 1;  //Triggers the if statement in the main loop for Current Control
+    c_update = 1;  //Triggers the if statement in the main loop for Current Control
 
     //Clear the interrupt flag
     AdcaRegs.ADCINTFLGCLR.bit.ADCINT1=1;    //Clears ADCA interrupt 1
