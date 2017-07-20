@@ -20,7 +20,7 @@
 #define sample_cycles (20 - 1)  //Note* only change the first number, the 1 accounts for the minimum
 
 //Current Bias current for the SADB to help stabilize
-#define current_bias 2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
+#define current_bias 2.2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
 
 //Current sensor conversion scale       *Calibrated as of 2017/07/20
 #define current_scale (10.168070782 * 3.3 / 4096)//Conversion scale for current sensor *(Amps/Volt)
@@ -35,9 +35,9 @@
 #define x1_target 1.2   //Target float level *(Millimeters)
 
 //PID constants
-#define kp_init 1   //Default to 1.1 for Initial tuning
-#define ki_init 0   //Default to 0 for initial tuning
-#define kd_init 0   //Default to 0 for initial tuning
+#define kp_init .4  //Default to 1.1 for Initial tuning
+#define ki_init .3  //Default to 0 for initial tuning
+#define kd_init 15  //Default to 0 for initial tuning
 
 /*
  * Structures
@@ -72,7 +72,8 @@ typedef struct current_coil_struct{
     float offset;           /*!< Offset constant to convert sensor reading to current, *(Amps) */
     float x_influence;      /*!< X-axis influence of the coil */
     float y_influence;      /*!< Y-axis influence of the coil */
-    float bias;              /*!< Individual bias current of the coil **May use in Gauss/De-Gauss process in the future */
+    float bias;             /*!< Individual bias current of the coil **May use in Gauss/De-Gauss process in the future */
+    int gpio_offset;        /*!< Offset in the register to the correct GPIO pin */
 }current;
 
 /*
@@ -83,7 +84,7 @@ typedef struct current_coil_struct{
 void SetupPosition(position *sensor);
 void SetupCoil(current *coil);
 void Position_PID_Cntrl(position *sensor);
-void current_target(current *coil,position *disp_sensor);
+void current_target(current *coil,position *x_disp_sensor,position *y_disp_sensor);
 void Bang_Bang_Cntrl(current *coil);
 void InitADCPart1();
 void InitADCPart2();
@@ -101,6 +102,7 @@ interrupt void epwm2_isr();
 
 //Definition of the X1 instance of the position sensor structure
 position X1;    //Variable used to store the PID math variables for the x axis displacement sensor
+position Y1;
 
 //Definition of the current coil structure
 current C1;     //Variable used to store the current control variables for coil 1
@@ -192,6 +194,9 @@ void main(void){
     GpioCtrlRegs.GPBGMUX1.bit.GPIO39 = 0;
     GpioCtrlRegs.GPBDIR.bit.GPIO39 = 1;
     GpioDataRegs.GPBCLEAR.bit.GPIO39 = 1;
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO34 = 0;
+    GpioCtrlRegs.GPBDIR.bit.GPIO34 = 1;
+    GpioDataRegs.GPBCLEAR.bit.GPIO34 = 1;
     EDIS;
 
     //Setup X1 variable
@@ -203,6 +208,10 @@ void main(void){
     SetupCoil(&C2);
     C1.sample_loc = &c1_sample;
     C2.sample_loc = &c2_sample;
+    C1.x_influence = 1;
+    C1.x_influence = -1;
+    C1.gpio_offset = 2;
+    C2.gpio_offset = 7;
 
     //Disable interrupts? Followed the example of process from the control suite example code
     DINT;
@@ -271,8 +280,10 @@ void main(void){
             x1_update = 0 ;
             GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;
             Position_PID_Cntrl(&X1);        //*OLD* Takes 1.0226 micro seconds
-            current_target(&C1, &X1);      //Displacement to Current target
+            current_target(&C1, &X1, &Y1);      //Displacement to Current target
+            current_target(&C2, &X1, &Y1);
             Bang_Bang_Cntrl(&C1);      //Current control function
+            Bang_Bang_Cntrl(&C2);
             GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;
 
         }
@@ -323,8 +334,8 @@ void SetupPosition(position *sensor){
 void SetupCoil(current *coil){
     coil->scale = current_scale;    //Sets the current conversion scale
     coil->offset = current_offset;  //Sets the current conversion offset
-    coil->x_influence = 1;          //Sets the current x value scaling constant
-    coil->y_influence = 1;          //Sets the current y value scaling constant
+    coil->x_influence = 0;          //Sets the current x value scaling constant
+    coil->y_influence = 0;          //Sets the current y value scaling constant
     coil->bias = current_bias;      //Sets the current bias point
 }
 
@@ -369,10 +380,10 @@ void Position_PID_Cntrl(position *sensor){
  * Current Target Function
  */
 
-void current_target(current *coil, position *disp_sensor){
+void current_target(current *coil, position *x_disp_sensor, position *y_disp_sensor){
     float temp;
     /* In the next line is where the future addition of the X Y influence will be accounted for */
-    temp = coil->bias + (disp_sensor->pid_out * disp_to_current); //*(Amps)
+    temp = coil->bias + disp_to_current * ((coil->x_influence * x_disp_sensor->pid_out) + (coil->y_influence * y_disp_sensor->pid_out)); //*(Amps)
     if(temp > current_max || temp < current_min){
         if(temp > current_max){
             temp = current_max;     //Limits the target current to the max value
@@ -399,10 +410,10 @@ void Bang_Bang_Cntrl(current *coil){
 
     //Run P_H pin high or low depending on error
     if(coil->error < 0){
-        GpioDataRegs.GPBSET.bit.GPIO39 = 1;     //Pin 88, This is Tied to the P_H pin for one of the Pololu's
+        GpioDataRegs.GPBSET.all |= 1 << coil->gpio_offset;     //Pin 88, This is Tied to the P_H pin for one of the Pololu's
     }
     else{
-        GpioDataRegs.GPBCLEAR.bit.GPIO39 = 1;   //Pin 88, This is Tied to the P_H pin for one of the Pololu's
+        GpioDataRegs.GPBCLEAR.all |= 1 << coil->gpio_offset;   //Pin 88, This is Tied to the P_H pin for one of the Pololu's
     }
     /*  Include when ready for PWM
     //Scales the current demand to a PWM duty cycle
