@@ -107,6 +107,8 @@ position Y1;
 //Definition of the current coil structure
 current C1;     //Variable used to store the current control variables for coil 1
 current C2;     //Variable used to store the current control variables for coil 2
+current C3;     //Variable used to store the current control variables for coil 3
+current C4;     //Variable used to store the current control variables for coil 4
 
 //Acquisition time calibration
     //*Used for Debug
@@ -121,12 +123,14 @@ float xdiff;
 
 //Displacement sensor reading
 int x1_sample;  //Global for x1 displacement sensor reading *(Digitized)
+int y1_sample;  //Global for y1 displacement sensor reading *(Digitized)
 
 //Cutoff value for X displacement
     //*Used for Debug
 int x1_cutoff = 0;  //Debuging purposes, clean out later
 
 //Displacement sensor update flag
+    /* Update name to account for more than just x being updated */
 int x1_update;  //Flag for new displacement sensor readings
 
 //Displacement sensor conversion scale
@@ -147,30 +151,17 @@ float disp_to_current = 2.2;  //Scales the PID output to current *(Meters/Amp)
 //Current sensors readings
 int c1_sample;  //Global for coil 1 current sensor reading *(Digitized)
 int c2_sample;  //Global for coil 2 current sensor reading *(Digitized)
-
-//Current sensor reading in current
-float i1_current;   //*(Amps)
+int c3_sample;  //Global for coil 3 current sensor reading *(Digitized)
+int c4_sample;  //Global for coil 4 current sensor reading *(Digitized)
 
 //Current sensor update flag
 int c_update;  //Flag for new current sensor readings
-
-//Current target
-float i1_target;    //*(Amps)
 
 //Maximum Current
 float current_max = 15;  //Max current for operation *(Amps)
 
 //Minimum Current
 float current_min = -15; //Min current for operation *(Amps)
-
-//Current control variables
-float   i1_error,
-        i1_pid_out;
-
-//PWM control variables
-int pwm_scale,
-    pwm_duty_cycle,
-    pwm_period;
 
 /*
  * Main
@@ -476,15 +467,27 @@ void InitADCPart2(){
     AdcaRegs.ADCSOC0CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC0, 5=ePWM1
     AdcaRegs.ADCSOC0CTL.bit.CHSEL = 0;      //Set the channel for SOC0 to convert, 0=ADCAIN0
     AdcaRegs.ADCSOC0CTL.bit.ACQPS = 19;     //Set the sample window size for SOC0, 19=20 SysClkCycles
-    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 0;  //Set EOCx to trigger ADCINT1, 0=EOC0
+    AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC1, 5=ePWM1
+    AdcaRegs.ADCSOC1CTL.bit.CHSEL = 1;      //Set the channel for SOC1 to convert, 0=ADCAIN1
+    AdcaRegs.ADCSOC1CTL.bit.ACQPS = 19;     //Set the sample window size for SOC1, 19=20 SysClkCycles
+    AdcaRegs.ADCSOC2CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC2, 5=ePWM1
+    AdcaRegs.ADCSOC2CTL.bit.CHSEL = 2;      //Set the channel for SOC2 to convert, 0=ADCAIN2
+    AdcaRegs.ADCSOC2CTL.bit.ACQPS = 19;     //Set the sample window size for SOC2, 19=20 SysClkCycles
+    AdcaRegs.ADCSOC3CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC3, 5=ePWM1
+    AdcaRegs.ADCSOC3CTL.bit.CHSEL = 3;      //Set the channel for SOC3 to convert, 0=ADCAIN3
+    AdcaRegs.ADCSOC3CTL.bit.ACQPS = 19;     //Set the sample window size for SOC3, 19=20 SysClkCycles
+    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 3;  //Set EOCx to trigger ADCINT1, 0=EOC0
     AdcaRegs.ADCINTSEL1N2.bit.INT1E = 1;    //Enable/Disable ADCINT1
     AdcaRegs.ADCINTSEL1N2.bit.INT1CONT = 0; //Enable/Disable Continuous Mode
     AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;  //Clears ADCINT1 Flag
 
     //Configuration Settings for ADCB
+    AdcbRegs.ADCSOC0CTL.bit.TRIGSEL = 8;    //Set the Trigger for SOC0, 8=ePWM2
+    AdcbRegs.ADCSOC0CTL.bit.CHSEL = 0;      //Set the channel for SOC0 to convert, 0=ADCBIN0
+    AdcbRegs.ADCSOC0CTL.bit.ACQPS = 19;     //Set the sample window size for SOC0, 19=20 SysClkCycles
     AdcbRegs.ADCSOC1CTL.bit.TRIGSEL = 8;    //Set the Trigger for SOC1, 8=ePWM2
-    AdcbRegs.ADCSOC1CTL.bit.CHSEL = 0;      //Set the channel for SOC1 to convert, 0=ADCBIN0
-    AdcbRegs.ADCSOC1CTL.bit.ACQPS = 19;     //Set the sample window size for SOC0, 19=20 SysClkCycles
+    AdcbRegs.ADCSOC1CTL.bit.CHSEL = 1;      //Set the channel for SOC1 to convert, 1=ADCBIN1
+    AdcbRegs.ADCSOC1CTL.bit.ACQPS = 19;     //Set the sample window size for SOC1, 19=20 SysClkCycles
     AdcbRegs.ADCINTSEL1N2.bit.INT2SEL = 1;  //Set EOCx to trigger ADCINT2, 1=EOC1
     AdcbRegs.ADCINTSEL1N2.bit.INT2E = 1;    //Enable/Disable ADCINT2
     AdcbRegs.ADCINTSEL1N2.bit.INT2CONT = 0; //Enable/Disable Continuous Mode
@@ -624,8 +627,10 @@ interrupt void adca1_isr(){
 
 
     //Write the sample to the global variable
-    c1_sample = AdcaResultRegs.ADCRESULT0;      //Reads the result register of SOC0
-
+    c1_sample = AdcaResultRegs.ADCRESULT0;  //Reads the result register of SOC0
+    c2_sample = AdcaResultRegs.ADCRESULT1;  //Reads the result register of SOC1
+    c3_sample = AdcaResultRegs.ADCRESULT2;  //Reads the result register of SOC2
+    c4_sample = AdcaResultRegs.ADCRESULT3;  //Reads the result register of SOC3
     //Set the update flag
     c_update = 1;  //Triggers the if statement in the main loop for Current Control
 
@@ -642,7 +647,8 @@ interrupt void adca1_isr(){
 
 interrupt void adcb2_isr(){
     //Write the sample to the global variable
-    x1_sample = AdcbResultRegs.ADCRESULT1;  //Reads the result register of SOC1
+    x1_sample = AdcbResultRegs.ADCRESULT0;  //Reads the result register of SOC0
+    y1_sample = AdcbResultRegs.ADCRESULT1;  //Reads the result register of SOC1
 
     //Set the update flag
     x1_update = 1;  //Triggers the if statement in the main loop for PID operations
