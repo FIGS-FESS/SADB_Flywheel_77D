@@ -200,7 +200,7 @@ void main(void){
     C1.sample_loc = &c1_sample;
     C2.sample_loc = &c2_sample;
     C1.x_influence = 1;
-    C1.x_influence = -1;
+    C2.x_influence = -1;
     C1.gpio_offset = 2;
     C2.gpio_offset = 7;
 
