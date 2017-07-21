@@ -20,7 +20,7 @@
 #define sample_cycles (20 - 1)  //Note* only change the first number, the 1 accounts for the minimum
 
 //Current Bias current for the SADB to help stabilize
-#define current_bias 2.2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
+#define current_bias 2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
 
 //Current sensor conversion scale       *Calibrated as of 2017/07/20
 #define current_scale (10.168070782 * 3.3 / 4096)//Conversion scale for current sensor *(Amps/Volt)
@@ -32,12 +32,12 @@
 #define x1_dt 0.1 //*(MilliSeconds)
 
 //Displacement sensor target
-#define x1_target 1.2   //Target float level *(Millimeters)
+#define x1_target 1   //Target float level *(Millimeters)
 
 //PID constants
-#define kp_init .4  //Default to 1.1 for Initial tuning
-#define ki_init .3  //Default to 0 for initial tuning
-#define kd_init 15  //Default to 0 for initial tuning
+#define kp_init 1  //Default to 1 for Initial tuning
+#define ki_init 0  //Default to 0 for initial tuning
+#define kd_init 0  //Default to 0 for initial tuning
 
 /*
  * Structures
@@ -254,9 +254,6 @@ void main(void){
     //Enable Real Time Management?
     ERTM;
 
-    //Calibration Time
-    //x1_target =
-
     //Start ePWM
     EPwmStart();
     //Loop
@@ -273,13 +270,13 @@ void main(void){
             //*Figure out if the current control should still be here
         if(x1_update){
             x1_update = 0 ;
-            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;
-            Position_PID_Cntrl(&X1);        //*OLD* Takes 1.0226 micro seconds
-            current_target(&C1, &X1, &Y1);      //Displacement to Current target
-            current_target(&C2, &X1, &Y1);
-            Bang_Bang_Cntrl(&C1);      //Current control function
-            Bang_Bang_Cntrl(&C2);
-            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;
+            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;  //Used to clock how long this if statement takes
+            Position_PID_Cntrl(&X1);    //PID control for X1 sensor
+            current_target(&C1, &X1, &Y1);  //Displacement to Current target for coil 1
+            current_target(&C2, &X1, &Y1);  //Displacement to Current target for coil 2
+            Bang_Bang_Cntrl(&C1);   //Current control function for coil 1
+            Bang_Bang_Cntrl(&C2);   //Current control function for coil 2
+            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;  //*OLD* Takes 1.0226 micro seconds
 
         }
 
