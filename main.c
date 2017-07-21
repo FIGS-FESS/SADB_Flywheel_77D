@@ -201,8 +201,12 @@ void main(void){
     C2.sample_loc = &c2_sample;
     C1.x_influence = 1;
     C2.x_influence = -1;
+    C3.y_influence = 1;
+    C4.y_influence = -1;
     C1.gpio_offset = 2;
     C2.gpio_offset = 7;
+    C3.gpio_offset = 12;
+    C4.gpio_offset = 13;
 
     //Disable interrupts? Followed the example of process from the control suite example code
     DINT;
