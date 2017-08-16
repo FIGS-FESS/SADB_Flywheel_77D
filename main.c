@@ -20,7 +20,7 @@
 #define sample_cycles (20 - 1)  //Note* only change the first number, the 1 accounts for the minimum
 
 //Current Bias current for the SADB to help stabilize
-#define current_bias 2.2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
+#define current_bias 2   //Set arbitrarily as a middle point in the range of currents we antisipate to use
 
 //Current sensor conversion scale       *Calibrated as of 2017/07/20
 #define current_scale (10.168070782 * 3.3 / 4096)//Conversion scale for current sensor *(Amps/Volt)
@@ -32,12 +32,12 @@
 #define x1_dt 0.1 //*(MilliSeconds)
 
 //Displacement sensor target
-#define x1_target 1.2   //Target float level *(Millimeters)
+#define x1_target 1   //Target float level *(Millimeters)
 
 //PID constants
-#define kp_init .4  //Default to 1.1 for Initial tuning
-#define ki_init .3  //Default to 0 for initial tuning
-#define kd_init 15  //Default to 0 for initial tuning
+#define kp_init 1  //Default to 1 for Initial tuning
+#define ki_init 0  //Default to 0 for initial tuning
+#define kd_init 0  //Default to 0 for initial tuning
 
 /*
  * Structures
@@ -107,6 +107,8 @@ position Y1;
 //Definition of the current coil structure
 current C1;     //Variable used to store the current control variables for coil 1
 current C2;     //Variable used to store the current control variables for coil 2
+current C3;     //Variable used to store the current control variables for coil 3
+current C4;     //Variable used to store the current control variables for coil 4
 
 //Acquisition time calibration
     //*Used for Debug
@@ -121,12 +123,14 @@ float xdiff;
 
 //Displacement sensor reading
 int x1_sample;  //Global for x1 displacement sensor reading *(Digitized)
+int y1_sample;  //Global for y1 displacement sensor reading *(Digitized)
 
 //Cutoff value for X displacement
     //*Used for Debug
 int x1_cutoff = 0;  //Debuging purposes, clean out later
 
 //Displacement sensor update flag
+    /* Update name to account for more than just x being updated */
 int x1_update;  //Flag for new displacement sensor readings
 
 //Displacement sensor conversion scale
@@ -147,30 +151,17 @@ float disp_to_current = 2.2;  //Scales the PID output to current *(Meters/Amp)
 //Current sensors readings
 int c1_sample;  //Global for coil 1 current sensor reading *(Digitized)
 int c2_sample;  //Global for coil 2 current sensor reading *(Digitized)
-
-//Current sensor reading in current
-float i1_current;   //*(Amps)
+int c3_sample;  //Global for coil 3 current sensor reading *(Digitized)
+int c4_sample;  //Global for coil 4 current sensor reading *(Digitized)
 
 //Current sensor update flag
 int c_update;  //Flag for new current sensor readings
-
-//Current target
-float i1_target;    //*(Amps)
 
 //Maximum Current
 float current_max = 15;  //Max current for operation *(Amps)
 
 //Minimum Current
 float current_min = -15; //Min current for operation *(Amps)
-
-//Current control variables
-float   i1_error,
-        i1_pid_out;
-
-//PWM control variables
-int pwm_scale,
-    pwm_duty_cycle,
-    pwm_period;
 
 /*
  * Main
@@ -210,8 +201,12 @@ void main(void){
     C2.sample_loc = &c2_sample;
     C1.x_influence = 1;
     C2.x_influence = -1;
+    C3.y_influence = 1;
+    C4.y_influence = -1;
     C1.gpio_offset = 2;
     C2.gpio_offset = 7;
+    C3.gpio_offset = 12;
+    C4.gpio_offset = 13;
 
     //Disable interrupts? Followed the example of process from the control suite example code
     DINT;
@@ -259,9 +254,6 @@ void main(void){
     //Enable Real Time Management?
     ERTM;
 
-    //Calibration Time
-    //x1_target =
-
     //Start ePWM
     EPwmStart();
     //Loop
@@ -278,13 +270,13 @@ void main(void){
             //*Figure out if the current control should still be here
         if(x1_update){
             x1_update = 0 ;
-            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;
-            Position_PID_Cntrl(&X1);        //*OLD* Takes 1.0226 micro seconds
-            current_target(&C1, &X1, &Y1);      //Displacement to Current target
-            current_target(&C2, &X1, &Y1);
-            Bang_Bang_Cntrl(&C1);      //Current control function
-            Bang_Bang_Cntrl(&C2);
-            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;
+            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;  //Used to clock how long this if statement takes
+            Position_PID_Cntrl(&X1);    //PID control for X1 sensor
+            current_target(&C1, &X1, &Y1);  //Displacement to Current target for coil 1
+            current_target(&C2, &X1, &Y1);  //Displacement to Current target for coil 2
+            Bang_Bang_Cntrl(&C1);   //Current control function for coil 1
+            Bang_Bang_Cntrl(&C2);   //Current control function for coil 2
+            GpioDataRegs.GPBTOGGLE.bit.GPIO40 = 1;  //*OLD* Takes 1.0226 micro seconds
 
         }
 
@@ -476,15 +468,27 @@ void InitADCPart2(){
     AdcaRegs.ADCSOC0CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC0, 5=ePWM1
     AdcaRegs.ADCSOC0CTL.bit.CHSEL = 0;      //Set the channel for SOC0 to convert, 0=ADCAIN0
     AdcaRegs.ADCSOC0CTL.bit.ACQPS = 19;     //Set the sample window size for SOC0, 19=20 SysClkCycles
-    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 0;  //Set EOCx to trigger ADCINT1, 0=EOC0
+    AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC1, 5=ePWM1
+    AdcaRegs.ADCSOC1CTL.bit.CHSEL = 1;      //Set the channel for SOC1 to convert, 0=ADCAIN1
+    AdcaRegs.ADCSOC1CTL.bit.ACQPS = 19;     //Set the sample window size for SOC1, 19=20 SysClkCycles
+    AdcaRegs.ADCSOC2CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC2, 5=ePWM1
+    AdcaRegs.ADCSOC2CTL.bit.CHSEL = 2;      //Set the channel for SOC2 to convert, 0=ADCAIN2
+    AdcaRegs.ADCSOC2CTL.bit.ACQPS = 19;     //Set the sample window size for SOC2, 19=20 SysClkCycles
+    AdcaRegs.ADCSOC3CTL.bit.TRIGSEL = 5;    //Set the Trigger for SOC3, 5=ePWM1
+    AdcaRegs.ADCSOC3CTL.bit.CHSEL = 3;      //Set the channel for SOC3 to convert, 0=ADCAIN3
+    AdcaRegs.ADCSOC3CTL.bit.ACQPS = 19;     //Set the sample window size for SOC3, 19=20 SysClkCycles
+    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 3;  //Set EOCx to trigger ADCINT1, 0=EOC0
     AdcaRegs.ADCINTSEL1N2.bit.INT1E = 1;    //Enable/Disable ADCINT1
     AdcaRegs.ADCINTSEL1N2.bit.INT1CONT = 0; //Enable/Disable Continuous Mode
     AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;  //Clears ADCINT1 Flag
 
     //Configuration Settings for ADCB
+    AdcbRegs.ADCSOC0CTL.bit.TRIGSEL = 8;    //Set the Trigger for SOC0, 8=ePWM2
+    AdcbRegs.ADCSOC0CTL.bit.CHSEL = 0;      //Set the channel for SOC0 to convert, 0=ADCBIN0
+    AdcbRegs.ADCSOC0CTL.bit.ACQPS = 19;     //Set the sample window size for SOC0, 19=20 SysClkCycles
     AdcbRegs.ADCSOC1CTL.bit.TRIGSEL = 8;    //Set the Trigger for SOC1, 8=ePWM2
-    AdcbRegs.ADCSOC1CTL.bit.CHSEL = 0;      //Set the channel for SOC1 to convert, 0=ADCBIN0
-    AdcbRegs.ADCSOC1CTL.bit.ACQPS = 19;     //Set the sample window size for SOC0, 19=20 SysClkCycles
+    AdcbRegs.ADCSOC1CTL.bit.CHSEL = 1;      //Set the channel for SOC1 to convert, 1=ADCBIN1
+    AdcbRegs.ADCSOC1CTL.bit.ACQPS = 19;     //Set the sample window size for SOC1, 19=20 SysClkCycles
     AdcbRegs.ADCINTSEL1N2.bit.INT2SEL = 1;  //Set EOCx to trigger ADCINT2, 1=EOC1
     AdcbRegs.ADCINTSEL1N2.bit.INT2E = 1;    //Enable/Disable ADCINT2
     AdcbRegs.ADCINTSEL1N2.bit.INT2CONT = 0; //Enable/Disable Continuous Mode
@@ -624,8 +628,10 @@ interrupt void adca1_isr(){
 
 
     //Write the sample to the global variable
-    c1_sample = AdcaResultRegs.ADCRESULT0;      //Reads the result register of SOC0
-
+    c1_sample = AdcaResultRegs.ADCRESULT0;  //Reads the result register of SOC0
+    c2_sample = AdcaResultRegs.ADCRESULT1;  //Reads the result register of SOC1
+    c3_sample = AdcaResultRegs.ADCRESULT2;  //Reads the result register of SOC2
+    c4_sample = AdcaResultRegs.ADCRESULT3;  //Reads the result register of SOC3
     //Set the update flag
     c_update = 1;  //Triggers the if statement in the main loop for Current Control
 
@@ -642,7 +648,8 @@ interrupt void adca1_isr(){
 
 interrupt void adcb2_isr(){
     //Write the sample to the global variable
-    x1_sample = AdcbResultRegs.ADCRESULT1;  //Reads the result register of SOC1
+    x1_sample = AdcbResultRegs.ADCRESULT0;  //Reads the result register of SOC0
+    y1_sample = AdcbResultRegs.ADCRESULT1;  //Reads the result register of SOC1
 
     //Set the update flag
     x1_update = 1;  //Triggers the if statement in the main loop for PID operations
